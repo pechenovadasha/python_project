@@ -6,6 +6,10 @@ from glints_detection_research import find_glint
 from reference_centers import reference_center_detection_method
 from centers_analisis import save_centers_to_file
 import matplotlib.pyplot as plt
+import time
+import threading
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def find_two_largest_contours_indices(contours, max_area=1000):
@@ -105,8 +109,8 @@ class PupilTracker:
         self.roi_right_y = []
         self.roi_coords = []
         self.use_roi = False
-        self.recalculation_roi = 45
-        self.capasity = 3
+        self.recalculation_roi = 100
+        self.capasity = 1
 
         self.mean_roi_left = 0
         self.mean_roi_right = 0
@@ -152,8 +156,17 @@ class PupilTracker:
             rigth_eye = search_gray[r_y1:r_y2, r_x1:r_x2].copy()
 
             # Находим контуры в области глаз. При РОИ используем метод 'kmeans' для определения серой области(области зрачка)
-            cnts_L = find_contours(left_eye, show, 'kmeans')
-            cnts_R = find_contours(rigth_eye, show, 'kmeans')
+            # cnts_L = find_contours(left_eye, show, 'kmeans')
+            # cnts_R = find_contours(rigth_eye, show, 'kmeans')
+
+            # Распараллелим посик контуров
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_left = executor.submit(find_contours, left_eye, show, 'kmeans')
+                future_right = executor.submit(find_contours, rigth_eye, show, 'kmeans')
+                
+                # Получаем результаты
+                cnts_L = future_left.result()
+                cnts_R = future_right.result()
 
             if cnts_L:
                 # Берем самый большой контур, принимаем его в качестве зрачка 
@@ -161,6 +174,7 @@ class PupilTracker:
 
                 # Находим отблески и принимаем близжайший за необходимый. 
                 # Данная функция возвращает координаты центра зрачка и отблеска
+
                 l = find_glint(largest_cnt_L, left_eye)
                 p_x_roi, p_y_roi, g_x_roi, g_y_roi = l
 
@@ -203,6 +217,7 @@ class PupilTracker:
                 return (None, None), (None, None), (None, None), (None, None)
 
             cnts_L = cnts_R = cnts
+
             idxL, idxR = find_two_largest_contours_indices(cnts)
 
             if idxL is None or idxR is None:
@@ -242,8 +257,8 @@ class PupilTracker:
             else:
                 self.use_roi = True
 
-                width = 200
-                height = 100
+                width = 500
+                height = 300
 
                 if len(self.roi_left_x) > 0 and len(self.roi_left_y) > 0:
                     x = np.mean(self.roi_left_x)

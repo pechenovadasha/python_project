@@ -4,6 +4,8 @@ import re
 import numpy as np
 import time 
 
+
+
 from processing import recieve_centers
 from centers_analisis import calculate_simple_rms, show_stat
 
@@ -31,7 +33,7 @@ def process_folder_images(folder_path):
     stat = dict()
     dir_name = os.path.basename(folder_path)
 
-    while i < len(bmp_files) - 1 and i < 100000:
+    while i < len(bmp_files) - 1 and i < 20000000:
         if i + 1 >= len(bmp_files):
             break
         
@@ -50,13 +52,20 @@ def process_folder_images(folder_path):
             print(f"file upload error!")
             continue
         
+        start = time.time()
+
+        # profiler = cProfile.Profile()
+        # profiler.enable()
         # вычитаем файлы для получения области зрачка, весь фон будет темный и только зрачки яркие
         diff = cv2.subtract(bright_pupil_frame, dark_pupil_frame)
-
+    
         # основная функция для получения центров зрачков, возращает ошибки из-за которых не были найдены зрачки.
         # Данная функция записывает всю статистку (центры зрачков, отбелсков) в csv файл, имя файла такое же как название папки с кадрами 
         error = recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name)
+        # profiler.disable()
+        end = time.time()
 
+        print(f"Time of full project = {end - start}")
         
         amount += 1
 
@@ -80,8 +89,7 @@ def process_folder_images(folder_path):
 def main():
 
     # На вход принимается путь до папки с записями в формате bmp
-    folders = ['/Users/user/Desktop/Skoltech/python_project/dataset']
-
+    folders = ['dataset']
 
     all_stat = {}
 
