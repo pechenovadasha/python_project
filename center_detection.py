@@ -103,14 +103,23 @@ class PupilTracker:
         self.glintL = (None, None)
         self.glintR = (None, None)
 
-        self.roi_left_x = []
-        self.roi_left_y = []
-        self.roi_right_x = []
-        self.roi_right_y = []
+        # self.roi_left_x = []
+        # self.roi_left_y = []
+        # self.roi_right_x = []
+        # self.roi_right_y = []
+        # self.roi_coords = []
+        self.capasity = 2
+
+        self.roi_left_points = np.zeros((self.capasity, 2), dtype=np.float32)  # [x, y]
+        self.roi_right_points = np.zeros((self.capasity, 2), dtype=np.float32)
+        self.roi_points_idx = 0  
+        
         self.roi_coords = []
+
+        self.roi_coords = [None, None]
         self.use_roi = False
         self.recalculation_roi = 100
-        self.capasity = 1
+        
 
         self.mean_roi_left = 0
         self.mean_roi_right = 0
@@ -130,11 +139,15 @@ class PupilTracker:
         self.amount_process += 1
         if self.amount_process == self.recalculation_roi: # перезапись Roi каждые n кадров 
             self.amount_process = 0
-            self.roi_left_x = []
-            self.roi_left_y = []
-            self.roi_right_x = []
-            self.roi_right_y = []
-            self.roi_coords = []
+            
+            self.roi_left_points.fill(0)
+            self.roi_right_points.fill(0)
+            self.roi_points_idx = 0
+            # self.roi_coords = []
+            # self.roi_left_x = []
+            # self.roi_left_y = []
+            # self.roi_right_x = []
+            # self.roi_right_y = []
             self.use_roi = False
 
         csv_file_name  = 'results/' + dir_name + '.csv'
@@ -241,57 +254,78 @@ class PupilTracker:
 
         color = bright_img.copy()
 
-        # накопление рои n кадров, и берем среднее 
         if self.use_roi == False:
-            if len(self.roi_left_x) < self.capasity and  len(self.roi_right_x) < self.capasity:
-                mean_x = np.nan_to_num(np.mean(self.roi_left_x))
-                mean_y = np.nan_to_num(np.mean(self.roi_left_y))
-                if mean_x == 0 or mean_y == 0 or (1.5 * mean_x) > self.pupilL[0] or (1.5 * mean_y) > self.pupilL[1]:
-                    self.roi_left_x.append(self.pupilL[0])
-                    self.roi_left_y.append(self.pupilL[1])
-                mean_x = np.nan_to_num(np.mean(self.roi_right_x))
-                mean_y = np.nan_to_num(np.mean(self.roi_right_y))
-                if mean_x == 0 or mean_y == 0 or (1.5 * mean_x) > self.pupilR[0] or (1.5 * mean_y) > self.pupilR[0]:
-                    self.roi_right_x.append(self.pupilR[0])
-                    self.roi_right_y.append(self.pupilR[1])
+            # Получаем количество заполненных точек
+            filled_count = min(self.roi_points_idx, self.capasity)
+            
+            if filled_count < self.capasity:
+                # Быстрое вычисление средних без nan_to_num
+                mean_left = np.mean(self.roi_left_points[:filled_count], axis=0)
+                mean_right = np.mean(self.roi_right_points[:filled_count], axis=0)
+                
+                # Проверяем валидность точек
+                add_left = (mean_left[0] == 0 and mean_left[1] == 0) or \
+                          (self.pupilL[0] is not None and self.pupilL[1] is not None and
+                           (1.5 * mean_left[0] > self.pupilL[0] or 
+                            1.5 * mean_left[1] > self.pupilL[1]))
+                
+                add_right = (mean_right[0] == 0 and mean_right[1] == 0) or \
+                           (self.pupilR[0] is not None and self.pupilR[1] is not None and
+                            (1.5 * mean_right[0] > self.pupilR[0] or 
+                             1.5 * mean_right[1] > self.pupilR[0]))
+                
+                # Добавляем точки в массивы
+                if add_left and self.pupilL[0] is not None and self.pupilL[1] is not None:
+                    self.roi_left_points[self.roi_points_idx % self.capasity] = [self.pupilL[0], self.pupilL[1]]
+                
+                if add_right and self.pupilR[0] is not None and self.pupilR[1] is not None:
+                    self.roi_right_points[self.roi_points_idx % self.capasity] = [self.pupilR[0], self.pupilR[1]]
+                
+                if add_left or add_right:
+                    self.roi_points_idx += 1
             else:
+                # Активируем ROI
                 self.use_roi = True
 
                 width = 500
-                height = 300
+                height = 400
 
-                if len(self.roi_left_x) > 0 and len(self.roi_left_y) > 0:
-                    x = np.mean(self.roi_left_x)
-                    y = np.mean(self.roi_left_y)
-                    x1 = int(x - width / 2)
-                    y1 = int(y - height / 2)
-                    x2 = int(x + width / 2)
-                    y2 = int(y + height / 2)
-                    self.roi_coords.append((x1, y1, x2, y2))
-                else:
-                    self.roi_coords.append(None)
-                
-                if len(self.roi_right_x) > 0 and len(self.roi_right_y) > 0:
-                    x = np.mean(self.roi_right_x)
-                    y = np.mean(self.roi_right_y)
-                    x1 = int(x - width / 2)
-                    y1 = int(y - height / 2)
-                    x2 = int(x + width / 2)
-                    y2 = int(y + height / 2)
-                    self.roi_coords.append((x1, y1, x2, y2))
-                else:
-                    self.roi_coords.append(None)
-                if (self.pupilL is not None):
-                    cv2.circle(color, (int(self.pupilL[0]), int(self.pupilL[1])),  2, (0,0,255), -1) 
-                if (self.pupilR is not None):    
-                    cv2.circle(color,  (int(self.pupilR[0]), int(self.pupilR[1])),  2, (0,0,255), -1)
+                # Вычисляем средние из заполненных данных
+                if self.roi_points_idx > 0:
+                    valid_count = min(self.roi_points_idx, self.capasity)
+                    
+                    # Левое ROI
+                    if valid_count > 0:
+                        left_points = self.roi_left_points[:valid_count]
+                        x = np.mean(left_points[:, 0])
+                        y = np.mean(left_points[:, 1])
+                        x1 = int(x - width / 2)
+                        y1 = int(y - height / 2)
+                        x2 = int(x + width / 2)
+                        y2 = int(y + height / 2)
+                        self.roi_coords.append((x1, y1, x2, y2))
+                    else:
+                        self.roi_coords.append(None)
+                    
+                    # Правое ROI
+                    if valid_count > 0:
+                        right_points = self.roi_right_points[:valid_count]
+                        x = np.mean(right_points[:, 0])
+                        y = np.mean(right_points[:, 1])
+                        x1 = int(x - width / 2)
+                        y1 = int(y - height / 2)
+                        x2 = int(x + width / 2)
+                        y2 = int(y + height / 2)
+                        self.roi_coords.append((x1, y1, x2, y2))
+                    else:
+                        self.roi_coords.append(None)
                 
        
         save_centers_to_file([self.pupilL, self.pupilR], [self.glintL, self.glintR],  [(0, 0), (0, 0)], csv_file_name)
 
 
         # Отрисовка центров
-        if 0:
+        if 1:
             if (self.pupilL is not None):
                 cv2.circle(color, (int(self.pupilL[0]), int(self.pupilL[1])),  2, (0,0,255), -1) 
             if (self.pupilR is not None):    
