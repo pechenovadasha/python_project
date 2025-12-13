@@ -291,41 +291,31 @@ class PupilTracker:
                 height = 400
 
                 # Вычисляем средние из заполненных данных
-                if self.roi_points_idx > 0:
-                    valid_count = min(self.roi_points_idx, self.capasity)
+                with ThreadPoolExecutor(max_workers=2) as executor:
+        # Определяем функцию для вычисления одного ROI внутри контекста
+                    def calc_roi(points):
+                        if len(points) == 0:
+                            return None
+                        x, y = np.mean(points, axis=0)
+                        x1 = int(x - 250)  
+                        y1 = int(y - 200) 
+                        x2 = int(x + 250)
+                        y2 = int(y + 200)
+                        return (x1, y1, x2, y2)
                     
-                    # Левое ROI
-                    if valid_count > 0:
-                        left_points = self.roi_left_points[:valid_count]
-                        x = np.mean(left_points[:, 0])
-                        y = np.mean(left_points[:, 1])
-                        x1 = int(x - width / 2)
-                        y1 = int(y - height / 2)
-                        x2 = int(x + width / 2)
-                        y2 = int(y + height / 2)
-                        self.roi_coords.append((x1, y1, x2, y2))
-                    else:
-                        self.roi_coords.append(None)
+                    # Запускаем параллельно
+                    future_left = executor.submit(calc_roi, self.roi_left_points[:valid_count])
+                    future_right = executor.submit(calc_roi, self.roi_right_points[:valid_count])
                     
-                    # Правое ROI
-                    if valid_count > 0:
-                        right_points = self.roi_right_points[:valid_count]
-                        x = np.mean(right_points[:, 0])
-                        y = np.mean(right_points[:, 1])
-                        x1 = int(x - width / 2)
-                        y1 = int(y - height / 2)
-                        x2 = int(x + width / 2)
-                        y2 = int(y + height / 2)
-                        self.roi_coords.append((x1, y1, x2, y2))
-                    else:
-                        self.roi_coords.append(None)
+                    # Сохраняем результаты
+                    self.roi_coords = [future_left.result(), future_right.result()]
                 
        
         save_centers_to_file([self.pupilL, self.pupilR], [self.glintL, self.glintR],  [(0, 0), (0, 0)], csv_file_name)
 
 
         # Отрисовка центров
-        if 1:
+        if 0:
             if (self.pupilL is not None):
                 cv2.circle(color, (int(self.pupilL[0]), int(self.pupilL[1])),  2, (0,0,255), -1) 
             if (self.pupilR is not None):    
