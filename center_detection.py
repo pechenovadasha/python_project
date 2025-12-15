@@ -6,6 +6,10 @@ from glints_detection_research import find_glint
 from reference_centers import reference_center_detection_method
 from centers_analisis import save_centers_to_file
 import matplotlib.pyplot as plt
+import time
+import threading
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def find_two_largest_contours_indices(contours, max_area=1000):
@@ -99,14 +103,23 @@ class PupilTracker:
         self.glintL = (None, None)
         self.glintR = (None, None)
 
-        self.roi_left_x = []
-        self.roi_left_y = []
-        self.roi_right_x = []
-        self.roi_right_y = []
+        # self.roi_left_x = []
+        # self.roi_left_y = []
+        # self.roi_right_x = []
+        # self.roi_right_y = []
+        # self.roi_coords = []
+        self.capasity = 2
+
+        self.roi_left_points = np.zeros((self.capasity, 2), dtype=np.float32)  # [x, y]
+        self.roi_right_points = np.zeros((self.capasity, 2), dtype=np.float32)
+        self.roi_points_idx = 0  
+        
         self.roi_coords = []
+
+        self.roi_coords = [None, None]
         self.use_roi = False
-        self.recalculation_roi = 45
-        self.capasity = 3
+        self.recalculation_roi = 100
+        
 
         self.mean_roi_left = 0
         self.mean_roi_right = 0
@@ -126,11 +139,15 @@ class PupilTracker:
         self.amount_process += 1
         if self.amount_process == self.recalculation_roi: # перезапись Roi каждые n кадров 
             self.amount_process = 0
-            self.roi_left_x = []
-            self.roi_left_y = []
-            self.roi_right_x = []
-            self.roi_right_y = []
-            self.roi_coords = []
+            
+            self.roi_left_points.fill(0)
+            self.roi_right_points.fill(0)
+            self.roi_points_idx = 0
+            # self.roi_coords = []
+            # self.roi_left_x = []
+            # self.roi_left_y = []
+            # self.roi_right_x = []
+            # self.roi_right_y = []
             self.use_roi = False
 
         csv_file_name  = 'results/' + dir_name + '.csv'
@@ -152,8 +169,17 @@ class PupilTracker:
             rigth_eye = search_gray[r_y1:r_y2, r_x1:r_x2].copy()
 
             # Находим контуры в области глаз. При РОИ используем метод 'kmeans' для определения серой области(области зрачка)
-            cnts_L = find_contours(left_eye, show, 'kmeans')
-            cnts_R = find_contours(rigth_eye, show, 'kmeans')
+            # cnts_L = find_contours(left_eye, show, 'kmeans')
+            # cnts_R = find_contours(rigth_eye, show, 'kmeans')
+
+            # Распараллелим посик контуров
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_left = executor.submit(find_contours, left_eye, show, 'kmeans')
+                future_right = executor.submit(find_contours, rigth_eye, show, 'kmeans')
+                
+                # Получаем результаты
+                cnts_L = future_left.result()
+                cnts_R = future_right.result()
 
             if cnts_L:
                 # Берем самый большой контур, принимаем его в качестве зрачка 
@@ -161,6 +187,7 @@ class PupilTracker:
 
                 # Находим отблески и принимаем близжайший за необходимый. 
                 # Данная функция возвращает координаты центра зрачка и отблеска
+
                 l = find_glint(largest_cnt_L, left_eye)
                 p_x_roi, p_y_roi, g_x_roi, g_y_roi = l
 
@@ -203,6 +230,7 @@ class PupilTracker:
                 return (None, None), (None, None), (None, None), (None, None)
 
             cnts_L = cnts_R = cnts
+
             idxL, idxR = find_two_largest_contours_indices(cnts)
 
             if idxL is None or idxR is None:
@@ -226,50 +254,61 @@ class PupilTracker:
 
         color = bright_img.copy()
 
-        # накопление рои n кадров, и берем среднее 
         if self.use_roi == False:
-            if len(self.roi_left_x) < self.capasity and  len(self.roi_right_x) < self.capasity:
-                mean_x = np.nan_to_num(np.mean(self.roi_left_x))
-                mean_y = np.nan_to_num(np.mean(self.roi_left_y))
-                if mean_x == 0 or mean_y == 0 or (1.5 * mean_x) > self.pupilL[0] or (1.5 * mean_y) > self.pupilL[1]:
-                    self.roi_left_x.append(self.pupilL[0])
-                    self.roi_left_y.append(self.pupilL[1])
-                mean_x = np.nan_to_num(np.mean(self.roi_right_x))
-                mean_y = np.nan_to_num(np.mean(self.roi_right_y))
-                if mean_x == 0 or mean_y == 0 or (1.5 * mean_x) > self.pupilR[0] or (1.5 * mean_y) > self.pupilR[0]:
-                    self.roi_right_x.append(self.pupilR[0])
-                    self.roi_right_y.append(self.pupilR[1])
+            # Получаем количество заполненных точек
+            filled_count = min(self.roi_points_idx, self.capasity)
+            
+            if filled_count < self.capasity:
+                # Быстрое вычисление средних без nan_to_num
+                mean_left = np.mean(self.roi_left_points[:filled_count], axis=0)
+                mean_right = np.mean(self.roi_right_points[:filled_count], axis=0)
+                
+                # Проверяем валидность точек
+                add_left = (mean_left[0] == 0 and mean_left[1] == 0) or \
+                          (self.pupilL[0] is not None and self.pupilL[1] is not None and
+                           (1.5 * mean_left[0] > self.pupilL[0] or 
+                            1.5 * mean_left[1] > self.pupilL[1]))
+                
+                add_right = (mean_right[0] == 0 and mean_right[1] == 0) or \
+                           (self.pupilR[0] is not None and self.pupilR[1] is not None and
+                            (1.5 * mean_right[0] > self.pupilR[0] or 
+                             1.5 * mean_right[1] > self.pupilR[0]))
+                
+                # Добавляем точки в массивы
+                if add_left and self.pupilL[0] is not None and self.pupilL[1] is not None:
+                    self.roi_left_points[self.roi_points_idx % self.capasity] = [self.pupilL[0], self.pupilL[1]]
+                
+                if add_right and self.pupilR[0] is not None and self.pupilR[1] is not None:
+                    self.roi_right_points[self.roi_points_idx % self.capasity] = [self.pupilR[0], self.pupilR[1]]
+                
+                if add_left or add_right:
+                    self.roi_points_idx += 1
             else:
+                # Активируем ROI
                 self.use_roi = True
 
-                width = 200
-                height = 100
+                width = 500
+                height = 400
 
-                if len(self.roi_left_x) > 0 and len(self.roi_left_y) > 0:
-                    x = np.mean(self.roi_left_x)
-                    y = np.mean(self.roi_left_y)
-                    x1 = int(x - width / 2)
-                    y1 = int(y - height / 2)
-                    x2 = int(x + width / 2)
-                    y2 = int(y + height / 2)
-                    self.roi_coords.append((x1, y1, x2, y2))
-                else:
-                    self.roi_coords.append(None)
-                
-                if len(self.roi_right_x) > 0 and len(self.roi_right_y) > 0:
-                    x = np.mean(self.roi_right_x)
-                    y = np.mean(self.roi_right_y)
-                    x1 = int(x - width / 2)
-                    y1 = int(y - height / 2)
-                    x2 = int(x + width / 2)
-                    y2 = int(y + height / 2)
-                    self.roi_coords.append((x1, y1, x2, y2))
-                else:
-                    self.roi_coords.append(None)
-                if (self.pupilL is not None):
-                    cv2.circle(color, (int(self.pupilL[0]), int(self.pupilL[1])),  2, (0,0,255), -1) 
-                if (self.pupilR is not None):    
-                    cv2.circle(color,  (int(self.pupilR[0]), int(self.pupilR[1])),  2, (0,0,255), -1)
+                # Вычисляем средние из заполненных данных
+                with ThreadPoolExecutor(max_workers=2) as executor:
+        # Определяем функцию для вычисления одного ROI внутри контекста
+                    def calc_roi(points):
+                        if len(points) == 0:
+                            return None
+                        x, y = np.mean(points, axis=0)
+                        x1 = int(x - 250)  
+                        y1 = int(y - 200) 
+                        x2 = int(x + 250)
+                        y2 = int(y + 200)
+                        return (x1, y1, x2, y2)
+                    
+                    # Запускаем параллельно
+                    future_left = executor.submit(calc_roi, self.roi_left_points[:valid_count])
+                    future_right = executor.submit(calc_roi, self.roi_right_points[:valid_count])
+                    
+                    # Сохраняем результаты
+                    self.roi_coords = [future_left.result(), future_right.result()]
                 
        
         save_centers_to_file([self.pupilL, self.pupilR], [self.glintL, self.glintR],  [(0, 0), (0, 0)], csv_file_name)
