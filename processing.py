@@ -1,12 +1,14 @@
 from center_detection import process_frame
 import time 
+from centers_analisis import save_centers_to_file
 
 
 
 def recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name):
 
     # получаем центры зрачков и отблесков и обрабаьываем возможные ошибки
-
+    start = time.time()
+    csv_file_name  = 'results/' + dir_name + '.csv'
     pupil_left, pupil_right, glint_left, glint_right = process_frame(diff, dark_pupil_frame, bright_pupil_frame, dir_name)
 
 
@@ -24,9 +26,6 @@ def recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name):
         print("Right glint not found")
         error.append("Right glint not found")
         
-
-
-    if pupil_left == None or pupil_right == None or glint_left == None or glint_right == None:
-        return error
+    save_centers_to_file([pupil_left, glint_left],[pupil_right, glint_left], [(0, 0), (0, 0)], csv_file_name)
     
     return error

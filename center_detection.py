@@ -1,10 +1,6 @@
-
 import cv2
 import numpy as np
-from collections import deque
 from glints_detection_research import find_glint  
-from reference_centers import reference_center_detection_method
-from centers_analisis import save_centers_to_file
 import matplotlib.pyplot as plt
 import time
 import threading
@@ -166,8 +162,6 @@ class PupilTracker:
             self.roi_points_idx = 0
             self.use_roi = False
 
-        csv_file_name  = 'results/' + dir_name + '.csv'
-
         
         search_gray = diff_orig
         if search_gray.ndim == 3:
@@ -211,7 +205,6 @@ class PupilTracker:
             cnts = find_contours(search_gray,show, 'adaptive')
             if cnts == None:
                 print("Error: countours don't find")
-                save_centers_to_file([(0, 0), (0, 0)],[(0, 0), (0, 0)], [(0, 0), (0, 0)], csv_file_name)
                 return (None, None), (None, None), (None, None), (None, None)
 
             cnts_L = cnts_R = cnts
@@ -220,7 +213,6 @@ class PupilTracker:
 
             if idxL is None or idxR is None:
                 print("Error: countours don't find")
-                save_centers_to_file([(0, 0), (0, 0)],[(0, 0), (0, 0)], [(0, 0), (0, 0)], csv_file_name)
                 return (None, None), (None, None), (None, None), (None, None)
 
 
@@ -229,13 +221,17 @@ class PupilTracker:
             else:
                 pupils = [cnts_R[idxR], cnts_L[idxL]] 
 
-            finds = [(0, 0, 0, 0), (0, 0, 0, 0)]
-            finds = [find_glint(c, bright_img) for c in pupils]
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_left = executor.submit(find_glint, pupils[0], bright_img)
+                future_right = executor.submit(find_glint, pupils[1], bright_img)
+                
+                find_left = future_left.result()
+                find_right = future_right.result()
 
-            self.pupilL = finds[0][:2] if finds[0] is not None else (0, 0)
-            self.pupilR = finds[1][:2] if finds[1] is not None else (0, 0)
-            self.glintL = finds[0][2:] if finds[0] is not None else (0, 0)
-            self.glintR = finds[1][2:] if finds[1] is not None else (0, 0)        
+            self.pupilL = find_left[:2] if find_left is not None else (0, 0)
+            self.pupilR = find_right[:2] if find_right is not None else (0, 0)
+            self.glintL = find_left[2:] if find_left is not None else (0, 0)
+            self.glintR = find_right[2:] if find_right is not None else (0, 0)        
 
         color = bright_img.copy()
 
@@ -288,16 +284,11 @@ class PupilTracker:
                         y2 = int(y + height//2)
                         return (x1, y1, x2, y2)
                     
-                    # Запускаем параллельно
+
                     future_left = executor.submit(calc_roi, self.roi_left_points[:valid_count])
                     future_right = executor.submit(calc_roi, self.roi_right_points[:valid_count])
                     
-                    # Сохраняем результаты
                     self.roi_coords = [future_left.result(), future_right.result()]
-                
-       
-        save_centers_to_file([self.pupilL, self.pupilR], [self.glintL, self.glintR],  [(0, 0), (0, 0)], csv_file_name)
-
 
         # Отрисовка центров
         if 0:
