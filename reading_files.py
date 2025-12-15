@@ -3,6 +3,10 @@ import os
 import re
 import numpy as np
 import time 
+import cProfile
+import pstats
+from io import StringIO
+
 
 
 
@@ -33,7 +37,7 @@ def process_folder_images(folder_path):
     stat = dict()
     dir_name = os.path.basename(folder_path)
 
-    while i < len(bmp_files) - 1 and i < 20000000:
+    while i < len(bmp_files) - 1 and i < 20000:
         if i + 1 >= len(bmp_files):
             break
         
@@ -54,18 +58,25 @@ def process_folder_images(folder_path):
         
         start = time.time()
 
-        # profiler = cProfile.Profile()
-        # profiler.enable()
+        profiler = cProfile.Profile()
+        profiler.enable()
         # вычитаем файлы для получения области зрачка, весь фон будет темный и только зрачки яркие
         diff = cv2.subtract(bright_pupil_frame, dark_pupil_frame)
     
         # основная функция для получения центров зрачков, возращает ошибки из-за которых не были найдены зрачки.
         # Данная функция записывает всю статистку (центры зрачков, отбелсков) в csv файл, имя файла такое же как название папки с кадрами 
         error = recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name)
-        # profiler.disable()
+        profiler.disable()
         end = time.time()
 
-        print(f"Time of full project = {end - start}")
+        profiler.dump_stats('profile_results.prof')
+        
+        # Выводим статистику
+        s = StringIO()
+        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+        ps.print_stats(20)  # топ-20 функций
+        print(s.getvalue())
+        print(f"Time of full project = {(end - start)*1000}ms")
         
         amount += 1
 
