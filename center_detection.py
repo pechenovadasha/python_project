@@ -1,10 +1,6 @@
-
 import cv2
 import numpy as np
-from collections import deque
 from glints_detection_research import find_glint  
-from reference_centers import reference_center_detection_method
-from centers_analisis import save_centers_to_file
 import matplotlib.pyplot as plt
 import time
 import threading
@@ -166,8 +162,6 @@ class PupilTracker:
             self.roi_points_idx = 0
             self.use_roi = False
 
-        csv_file_name  = 'results/' + dir_name + '.csv'
-
         
         search_gray = diff_orig
         if search_gray.ndim == 3:
@@ -211,7 +205,6 @@ class PupilTracker:
             cnts = find_contours(search_gray,show, 'adaptive')
             if cnts == None:
                 print("Error: countours don't find")
-                save_centers_to_file([(0, 0), (0, 0)],[(0, 0), (0, 0)], [(0, 0), (0, 0)], csv_file_name)
                 return (None, None), (None, None), (None, None), (None, None)
 
             cnts_L = cnts_R = cnts
@@ -220,7 +213,6 @@ class PupilTracker:
 
             if idxL is None or idxR is None:
                 print("Error: countours don't find")
-                save_centers_to_file([(0, 0), (0, 0)],[(0, 0), (0, 0)], [(0, 0), (0, 0)], csv_file_name)
                 return (None, None), (None, None), (None, None), (None, None)
 
 
@@ -297,10 +289,6 @@ class PupilTracker:
                     future_right = executor.submit(calc_roi, self.roi_right_points[:valid_count])
                     
                     self.roi_coords = [future_left.result(), future_right.result()]
-                
-       
-        save_centers_to_file([self.pupilL, self.pupilR], [self.glintL, self.glintR],  [(0, 0), (0, 0)], csv_file_name)
-
 
         # Отрисовка центров
         if 0:
