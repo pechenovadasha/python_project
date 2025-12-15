@@ -103,11 +103,6 @@ class PupilTracker:
         self.glintL = (None, None)
         self.glintR = (None, None)
 
-        # self.roi_left_x = []
-        # self.roi_left_y = []
-        # self.roi_right_x = []
-        # self.roi_right_y = []
-        # self.roi_coords = []
         self.capasity = 2
 
         self.roi_left_points = np.zeros((self.capasity, 2), dtype=np.float32)  # [x, y]
@@ -126,8 +121,34 @@ class PupilTracker:
 
         self.amount_process = 0
 
+    
+    def roi_process(eye_img, x1, y1, is_left):
+        cnts = find_contours(eye_img, False, 'kmeans')
         
+        if not cnts:
+            return (None, None), (None, None), is_left
         
+        # Берем самый большой контур, принимаем его в качестве зрачка 
+        largest = max(cnts, key=cv2.contourArea)
+
+        # Находим отблески и принимаем близжайший за необходимый. 
+        # Данная функция возвращает координаты центра зрачка и отблеска
+
+        glint_and_pupil_center = find_glint(largest, eye_img)
+        p_x_roi, p_y_roi, g_x_roi, g_y_roi = glint_and_pupil_center
+
+        # Необходимо данные координаты привести к искомым размерам и запомнить их
+        pupil = (None, None)
+        glint = (None, None)
+        if p_x_roi is not None and p_y_roi is not None:
+            pupil = (p_x_roi + x1, p_y_roi + y1)
+        else:
+            print("Error: left pupil center is none") 
+        if g_x_roi is not None and  g_y_roi is not None:    
+            glint = (g_x_roi + x1, g_y_roi + y1)
+        else:
+            print("Error: left glint is none") 
+        return pupil, glint, is_left
 
 
     def process(self, diff_orig, bright_img, dir_name):
@@ -143,11 +164,6 @@ class PupilTracker:
             self.roi_left_points.fill(0)
             self.roi_right_points.fill(0)
             self.roi_points_idx = 0
-            # self.roi_coords = []
-            # self.roi_left_x = []
-            # self.roi_left_y = []
-            # self.roi_right_x = []
-            # self.roi_right_y = []
             self.use_roi = False
 
         csv_file_name  = 'results/' + dir_name + '.csv'
@@ -163,64 +179,33 @@ class PupilTracker:
         if self.use_roi == True:
             # Получаем координаты области левого и правого глаза (прямоугольник)
             l_x1, l_y1, l_x2, l_y2 = self.roi_coords[0]
-            left_eye = search_gray[l_y1:l_y2, l_x1:l_x2].copy()
-   
             r_x1, r_y1, r_x2, r_y2 = self.roi_coords[1]
-            rigth_eye = search_gray[r_y1:r_y2, r_x1:r_x2].copy()
 
-            # Находим контуры в области глаз. При РОИ используем метод 'kmeans' для определения серой области(области зрачка)
-            # cnts_L = find_contours(left_eye, show, 'kmeans')
-            # cnts_R = find_contours(rigth_eye, show, 'kmeans')
-
-            # Распараллелим посик контуров
+            # Обработка глаз происходит в двух потоках для каждого глаза
             with ThreadPoolExecutor(max_workers=2) as executor:
-                future_left = executor.submit(find_contours, left_eye, show, 'kmeans')
-                future_right = executor.submit(find_contours, rigth_eye, show, 'kmeans')
+                # Запускаем обработку левого и правого глаза параллельно
+                future_left = executor.submit(
+                    self.roi_process, 
+                    search_gray[l_y1:l_y2, l_x1:l_x2], 
+                    l_x1, l_y1, 
+                    True
+                )
+                future_right = executor.submit(
+                    self.roi_process,
+                    search_gray[r_y1:r_y2, r_x1:r_x2], 
+                    r_x1, r_y1, 
+                    False
+                )
+
+                left_result = future_left.result()
+                right_result = future_right.result()
+
+                pupil_left, glint_left, _ = left_result
+                pupil_right, glint_right, _ = right_result
                 
-                # Получаем результаты
-                cnts_L = future_left.result()
-                cnts_R = future_right.result()
-
-            if cnts_L:
-                # Берем самый большой контур, принимаем его в качестве зрачка 
-                largest_cnt_L = max(cnts_L, key=cv2.contourArea)
-
-                # Находим отблески и принимаем близжайший за необходимый. 
-                # Данная функция возвращает координаты центра зрачка и отблеска
-
-                l = find_glint(largest_cnt_L, left_eye)
-                p_x_roi, p_y_roi, g_x_roi, g_y_roi = l
-
-                # Необходимо данные координаты привести к искомым размерам и запомнить их
-                if p_x_roi is not None and p_y_roi is not None:
-                    self.pupilL = (p_x_roi + l_x1, p_y_roi + l_y1)
-                else:
-                    print("Error: left pupil center is none") 
-                if g_x_roi is not None and  g_y_roi is not None:    
-                    self.glintL = (g_x_roi + l_x1, g_y_roi + l_y1)
-                else:
-                    print("Error: left glint is none") 
-            else:
-                print("Error: countours of left eye don't find")
-                save_centers_to_file([(0, 0), (0, 0)], [(0, 0), (0, 0)], [(0, 0), (0, 0)], csv_file_name)
-                return (None, None), (None, None), (None, None), (None, None)
-
-            if cnts_R:
-                largest_cnt_R = max(cnts_R, key=cv2.contourArea)
-                r = find_glint(largest_cnt_R, rigth_eye)
-                p_x_roi, p_y_roi, g_x_roi, g_y_roi = r
-                if p_x_roi is not None and p_y_roi is not None:
-                    self.pupilR = (p_x_roi + r_x1, p_y_roi + r_y1)
-                else:
-                    print("Error: right pupil center is none") 
-                if g_x_roi is not None and  g_y_roi is not None:
-                    self.glintR = (g_x_roi + r_x1, g_y_roi + r_y1)
-                else:
-                    print("Error: right glint is none") 
-            else:
-                print("Error: countours of right eye don't find")
-                save_centers_to_file([(0, 0), (0, 0)], [(0, 0), (0, 0)], [(0, 0), (0, 0)], csv_file_name)
-                return (None, None), (None, None), (None, None), (None, None)
+                self.pupilL, self.glintL = pupil_left, glint_left
+                self.pupilR, self.glintR = pupil_right, glint_right
+                
         else:
             # Алгоритм без использованиея РОИ. Для него вы используем метод трешхолда
             cnts = find_contours(search_gray,show, 'adaptive')
@@ -292,15 +277,15 @@ class PupilTracker:
 
                 # Вычисляем средние из заполненных данных
                 with ThreadPoolExecutor(max_workers=2) as executor:
-        # Определяем функцию для вычисления одного ROI внутри контекста
+                # Определяем функцию для вычисления одного ROI внутри контекста
                     def calc_roi(points):
                         if len(points) == 0:
                             return None
                         x, y = np.mean(points, axis=0)
-                        x1 = int(x - 250)  
-                        y1 = int(y - 200) 
-                        x2 = int(x + 250)
-                        y2 = int(y + 200)
+                        x1 = int(x - width//2)  
+                        y1 = int(y - height//2) 
+                        x2 = int(x +  width//2)
+                        y2 = int(y + height//2)
                         return (x1, y1, x2, y2)
                     
                     # Запускаем параллельно
