@@ -93,13 +93,14 @@ class PupilTracker:
 
     def __init__(self):
 
+        self.executor = ThreadPoolExecutor(max_workers=2)
 
         self.pupilL = (None, None)
         self.pupilR = (None, None)
         self.glintL = (None, None)
         self.glintR = (None, None)
 
-        self.capasity = 2
+        self.capasity = 3
 
         self.roi_left_points = np.zeros((self.capasity, 2), dtype=np.float32)  # [x, y]
         self.roi_right_points = np.zeros((self.capasity, 2), dtype=np.float32)
@@ -109,7 +110,7 @@ class PupilTracker:
 
         self.roi_coords = [None, None]
         self.use_roi = False
-        self.recalculation_roi = 100
+        self.recalculation_roi = 50
         
 
         self.mean_roi_left = 0
@@ -118,7 +119,7 @@ class PupilTracker:
         self.amount_process = 0
 
     
-    def roi_process(eye_img, x1, y1, is_left):
+    def roi_process(self, eye_img, x1, y1, is_left):
         cnts = find_contours(eye_img, False, 'kmeans')
         
         if not cnts:
@@ -171,36 +172,38 @@ class PupilTracker:
 
         # Если набралось статистики для РОИ, то используем его
         if self.use_roi == True:
+            print("Process with ROI")
             # Получаем координаты области левого и правого глаза (прямоугольник)
             l_x1, l_y1, l_x2, l_y2 = self.roi_coords[0]
             r_x1, r_y1, r_x2, r_y2 = self.roi_coords[1]
 
             # Обработка глаз происходит в двух потоках для каждого глаза
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            # with ThreadPoolExecutor(max_workers=2) as executor:
                 # Запускаем обработку левого и правого глаза параллельно
-                future_left = executor.submit(
-                    self.roi_process, 
-                    search_gray[l_y1:l_y2, l_x1:l_x2], 
-                    l_x1, l_y1, 
-                    True
-                )
-                future_right = executor.submit(
-                    self.roi_process,
-                    search_gray[r_y1:r_y2, r_x1:r_x2], 
-                    r_x1, r_y1, 
-                    False
-                )
+            future_left = self.executor.submit(
+                self.roi_process, 
+                search_gray[l_y1:l_y2, l_x1:l_x2], 
+                l_x1, l_y1, 
+                True
+            )
+            future_right = self.executor.submit(
+                self.roi_process,
+                search_gray[r_y1:r_y2, r_x1:r_x2], 
+                r_x1, r_y1, 
+                False
+            )
 
-                left_result = future_left.result()
-                right_result = future_right.result()
+            left_result = future_left.result()
+            right_result = future_right.result()
 
-                pupil_left, glint_left, _ = left_result
-                pupil_right, glint_right, _ = right_result
-                
-                self.pupilL, self.glintL = pupil_left, glint_left
-                self.pupilR, self.glintR = pupil_right, glint_right
+            pupil_left, glint_left, _ = left_result
+            pupil_right, glint_right, _ = right_result
+            
+            self.pupilL, self.glintL = pupil_left, glint_left
+            self.pupilR, self.glintR = pupil_right, glint_right
                 
         else:
+            print("Process without ROI")
             # Алгоритм без использованиея РОИ. Для него вы используем метод трешхолда
             cnts = find_contours(search_gray,show, 'adaptive')
             if cnts == None:
@@ -221,12 +224,12 @@ class PupilTracker:
             else:
                 pupils = [cnts_R[idxR], cnts_L[idxL]] 
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                future_left = executor.submit(find_glint, pupils[0], bright_img)
-                future_right = executor.submit(find_glint, pupils[1], bright_img)
-                
-                find_left = future_left.result()
-                find_right = future_right.result()
+            # with ThreadPoolExecutor(max_workers=2) as executor:
+            future_left = self.executor.submit(find_glint, pupils[0], bright_img)
+            future_right = self.executor.submit(find_glint, pupils[1], bright_img)
+            
+            find_left = future_left.result()
+            find_right = future_right.result()
 
             self.pupilL = find_left[:2] if find_left is not None else (0, 0)
             self.pupilR = find_right[:2] if find_right is not None else (0, 0)
@@ -236,58 +239,31 @@ class PupilTracker:
         color = bright_img.copy()
 
         if self.use_roi == False:
-            # Получаем количество заполненных точек
-            filled_count = min(self.roi_points_idx, self.capasity)
-            
-            if filled_count < self.capasity:
-                # Быстрое вычисление средних без nan_to_num
-                mean_left = np.mean(self.roi_left_points[:filled_count], axis=0)
-                mean_right = np.mean(self.roi_right_points[:filled_count], axis=0)
+            if (self.pupilL[0] is not None and self.pupilL[1] is not None and 
+                self.pupilR[0] is not None and self.pupilR[1] is not None):
                 
-                # Проверяем валидность точек
-                add_left = (mean_left[0] == 0 and mean_left[1] == 0) or \
-                          (self.pupilL[0] is not None and self.pupilL[1] is not None and
-                           (1.5 * mean_left[0] > self.pupilL[0] or 
-                            1.5 * mean_left[1] > self.pupilL[1]))
-                
-                add_right = (mean_right[0] == 0 and mean_right[1] == 0) or \
-                           (self.pupilR[0] is not None and self.pupilR[1] is not None and
-                            (1.5 * mean_right[0] > self.pupilR[0] or 
-                             1.5 * mean_right[1] > self.pupilR[0]))
-                
-                # Добавляем точки в массивы
-                if add_left and self.pupilL[0] is not None and self.pupilL[1] is not None:
-                    self.roi_left_points[self.roi_points_idx % self.capasity] = [self.pupilL[0], self.pupilL[1]]
-                
-                if add_right and self.pupilR[0] is not None and self.pupilR[1] is not None:
-                    self.roi_right_points[self.roi_points_idx % self.capasity] = [self.pupilR[0], self.pupilR[1]]
-                
-                if add_left or add_right:
+                if self.roi_points_idx < self.capasity:
+                    self.roi_left_points[self.roi_points_idx] = [self.pupilL[0], self.pupilL[1]]
+                    self.roi_right_points[self.roi_points_idx] = [self.pupilR[0], self.pupilR[1]]
                     self.roi_points_idx += 1
-            else:
-                # Активируем ROI
-                self.use_roi = True
-
-                width = 500
-                height = 400
-
-                # Вычисляем средние из заполненных данных
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                # Определяем функцию для вычисления одного ROI внутри контекста
+                
+                else:
+                    self.use_roi = True
+                    width, height = 500, 400
+                    
                     def calc_roi(points):
-                        if len(points) == 0:
-                            return None
                         x, y = np.mean(points, axis=0)
-                        x1 = int(x - width//2)  
-                        y1 = int(y - height//2) 
-                        x2 = int(x +  width//2)
-                        y2 = int(y + height//2)
-                        return (x1, y1, x2, y2)
+                        return (
+                            int(x - width//2),
+                            int(y - height//2),
+                            int(x + width//2),
+                            int(y + height//2)
+                        )
                     
-
-                    future_left = executor.submit(calc_roi, self.roi_left_points[:valid_count])
-                    future_right = executor.submit(calc_roi, self.roi_right_points[:valid_count])
-                    
+                    # Параллельное вычисление
+                    # with ThreadPoolExecutor(max_workers=2) as executor:
+                    future_left = self.executor.submit(calc_roi, self.roi_left_points)
+                    future_right = self.executor.submit(calc_roi, self.roi_right_points)
                     self.roi_coords = [future_left.result(), future_right.result()]
 
         # Отрисовка центров
