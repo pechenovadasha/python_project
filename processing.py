@@ -1,15 +1,25 @@
-from center_detection import process_frame
-import time 
-from centers_analisis import save_centers_to_file
+import threading
+from center_detection import PupilTracker
+
+
+_thread_local = threading.local()
+
+def _get_tracker():
+    """Return a tracker bound to the current thread to keep processing thread-safe."""
+    tracker = getattr(_thread_local, "tracker", None)
+    if tracker is None:
+        tracker = PupilTracker()
+        _thread_local.tracker = tracker
+    return tracker
 
 
 
 def recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name):
 
     # получаем центры зрачков и отблесков и обрабаьываем возможные ошибки
-    start = time.time()
     csv_file_name  = 'results/' + dir_name + '.csv'
-    pupil_left, pupil_right, glint_left, glint_right = process_frame(diff, dark_pupil_frame, bright_pupil_frame, dir_name)
+    tracker = _get_tracker()
+    pupil_left, pupil_right, glint_left, glint_right = tracker.process(diff, bright_pupil_frame, dir_name)
 
 
     error = []
@@ -25,7 +35,5 @@ def recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name):
     if glint_right == (None, None):
         print("Right glint not found")
         error.append("Right glint not found")
-        
-    save_centers_to_file([pupil_left, glint_left],[pupil_right, glint_left], [(0, 0), (0, 0)], csv_file_name)
     
     return error

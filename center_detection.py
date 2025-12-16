@@ -1,12 +1,13 @@
 import cv2
 import numpy as np
 from glints_detection_research import find_glint  
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import time
 import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+MAX_WORKERS = 1
 
 def find_two_largest_contours_indices(contours, max_area=1000):
     
@@ -176,7 +177,7 @@ class PupilTracker:
             r_x1, r_y1, r_x2, r_y2 = self.roi_coords[1]
 
             # Обработка глаз происходит в двух потоках для каждого глаза
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 # Запускаем обработку левого и правого глаза параллельно
                 future_left = executor.submit(
                     self.roi_process, 
@@ -221,7 +222,7 @@ class PupilTracker:
             else:
                 pupils = [cnts_R[idxR], cnts_L[idxL]] 
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 future_left = executor.submit(find_glint, pupils[0], bright_img)
                 future_right = executor.submit(find_glint, pupils[1], bright_img)
                 
@@ -272,7 +273,7 @@ class PupilTracker:
                 height = 400
 
                 # Вычисляем средние из заполненных данных
-                with ThreadPoolExecutor(max_workers=2) as executor:
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 # Определяем функцию для вычисления одного ROI внутри контекста
                     def calc_roi(points):
                         if len(points) == 0:
@@ -305,7 +306,6 @@ class PupilTracker:
             cv2.destroyAllWindows()
 
         return self.pupilL, self.pupilR, self.glintL, self.glintR
-
 
 _TRACKER = PupilTracker()
 

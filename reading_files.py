@@ -1,17 +1,15 @@
+import argparse
 import cv2
 import os
 import re
 import numpy as np
 import time 
-import cProfile
 import pstats
 from io import StringIO
-
-
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from processing import recieve_centers
-from centers_analisis import calculate_simple_rms, show_stat
+# from centers_analisis import calculate_simple_rms, show_stat
 
 
 def natural_sort_key(filename):
@@ -19,7 +17,33 @@ def natural_sort_key(filename):
     return [int(text) if text.isdigit() else text.lower() 
             for text in re.split(r'(\d+)', filename)]
 
-def process_folder_images(folder_path):
+
+def _process_pair(light_file, dark_file, folder_path, dir_name):
+    print(f"Processe: {light_file} и {dark_file}")
+
+    dark_path = os.path.join(folder_path, dark_file)
+    light_path = os.path.join(folder_path, light_file)
+
+    dark_pupil_frame = cv2.imread(dark_path)
+    bright_pupil_frame = cv2.imread(light_path)
+
+    if dark_pupil_frame is None or bright_pupil_frame is None:
+        return {
+            'processed': False,
+            'pair_key': light_file,
+            'error': ["file upload error!"]
+        }
+
+    diff = cv2.subtract(bright_pupil_frame, dark_pupil_frame)
+    error = recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name)
+
+    return {
+        'processed': True,
+        'pair_key': light_file,
+        'error': error
+    }
+
+def process_folder_images(folder_path, num_workers):
 
     # Функция открывает файл и считывает файлы парами
 
@@ -36,55 +60,33 @@ def process_folder_images(folder_path):
     error_stat = {}
     stat = dict()
     dir_name = os.path.basename(folder_path)
+    pairs = []
 
     while i < len(bmp_files) - 1 and i < 20000:
         if i + 1 >= len(bmp_files):
             break
-        
-        # Точно знаем что 1 файл имеет светлый зрачок
-        light_file = os.path.join(folder_path, bmp_files[i])
-        dark_file = os.path.join(folder_path, bmp_files[i + 1])
-        
-        print(f"Processe: {bmp_files[i]} и {bmp_files[i + 1]}")
-        
-
-        dark_pupil_frame = cv2.imread(dark_file)
-        bright_pupil_frame = cv2.imread(light_file)
-        
-  
-        if dark_pupil_frame is None or bright_pupil_frame is None:
-            print(f"file upload error!")
-            continue
-        
-        start = time.time()
-
-        profiler = cProfile.Profile()
-        profiler.enable()
-        # вычитаем файлы для получения области зрачка, весь фон будет темный и только зрачки яркие
-        diff = cv2.subtract(bright_pupil_frame, dark_pupil_frame)
-    
-        # основная функция для получения центров зрачков, возращает ошибки из-за которых не были найдены зрачки.
-        # Данная функция записывает всю статистку (центры зрачков, отбелсков) в csv файл, имя файла такое же как название папки с кадрами 
-        error = recieve_centers(diff, dark_pupil_frame, bright_pupil_frame, dir_name)
-        profiler.disable()
-        end = time.time()
-
-        profiler.dump_stats('profile_results.prof')
-        
-        # Выводим статистику
-        s = StringIO()
-        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
-        ps.print_stats(20)  # топ-20 функций
-        print(s.getvalue())
-        print(f"Time of full project = {(end - start)*1000}ms")
-        
-        amount += 1
-
-        if error != []:
-            error_stat[bmp_files[i]] = error.copy()
-            errors += 1
-
+        pairs.append((bmp_files[i], bmp_files[i + 1]))
         i += 2
+
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [
+            executor.submit(_process_pair, light, dark, folder_path, dir_name)
+            for light, dark in pairs
+        ]
+
+        for future in as_completed(futures):
+            result = future.result()
+            if not result['processed']:
+                print("file upload error!")
+                errors += 1
+                error_stat[result['pair_key']] = result['error']
+                continue
+
+            amount += 1
+
+            if result['error'] != []:
+                error_stat[result['pair_key']] = result['error'].copy()
+                errors += 1
 
     print(error_stat)
     print(f"{amount} frames was sent for processing")
@@ -100,14 +102,29 @@ def process_folder_images(folder_path):
 def main():
 
     # На вход принимается путь до папки с записями в формате bmp
-    folders = ['dataset']
+    parser = argparse.ArgumentParser(description="Process bright/dark BMP pairs in parallel.")
+    parser.add_argument(
+        "-w", "--workers",
+        type=int,
+        default=14,
+        help="Количество потоков для обработки пар файлов (по умолчанию 4)."
+    )
+    parser.add_argument(
+        "-f", "--folders",
+        nargs="+",
+        default=["dataset"],
+        help="Пути до папок с BMP-файлами."
+    )
+    args = parser.parse_args()
+
+    num_workers = max(1, args.workers)
 
     all_stat = {}
 
-    for f in folders:
-        stat  = process_folder_images(f)
+    for f in args.folders:
+        stat  = process_folder_images(f, num_workers)
         all_stat.update(stat)
-    show_stat(all_stat, total_files=900, save_to_file=False)
+    # show_stat(all_stat, total_files=900, save_to_file=False)
 
     print("Processing of all files completed")
 
