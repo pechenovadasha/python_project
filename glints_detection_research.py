@@ -1,35 +1,39 @@
 import os
 import cv2
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import numpy as np
-
+from numba import njit, prange
 import time
 
+@njit(nogil=True, cache=True, fastmath=True)
 def get_contour_center(contour):
-
-    if len(contour) == 0:
-        return 0, 0  
+    n = len(contour)
+    if n == 0:
+        return 0.0, 0.0
     
-
-    contour = np.array(contour).reshape(-1, 2)
+    if n <= 10:
+        sum_x = 0.0
+        sum_y = 0.0
+        for i in range(n):
+            sum_x += contour[i][0][0]
+            sum_y += contour[i][0][1]
+        return sum_x / n, sum_y / n
     
-
-    if len(contour) == 1:
-        return contour[0][0], contour[0][1]
+    m00 = 0.0
+    m10 = 0.0
+    m01 = 0.0
     
-
-    M = cv2.moments(contour)
-    if M["m00"] == 0:
-
-        center_x = np.mean(contour[:, 0])
-        center_y = np.mean(contour[:, 1])
-        return center_x, center_y
-    else:
-       
-        cX = int(M["m10"] / M["m00"])
-        cY = int(M["m01"] / M["m00"])
-        return cX, cY
-
+    for i in range(n):
+        x = float(contour[i][0][0])
+        y = float(contour[i][0][1])
+        m00 += 1.0
+        m10 += x
+        m01 += y
+    
+    if abs(m00) < 1e-6:
+        return 0.0, 0.0
+    
+    return m10 / m00, m01 / m00
 
 def find_glint(pupil_contour, image, thr_glint: int = 200):
    

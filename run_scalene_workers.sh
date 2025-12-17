@@ -32,13 +32,60 @@ EXTRA_ARGS=("$@")
 
 mkdir -p "${OUT_ROOT}"
 
+run_with_timeout() {
+  # Runs a command with a 10s timeout using the best available tool; returns
+  # 124 on timeout to mirror GNU timeout.
+  local -a cmd=("$@")
+  local status
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout 10s "${cmd[@]}"; then
+      status=0
+    else
+      status=$?
+    fi
+  elif command -v gtimeout >/dev/null 2>&1; then
+    if gtimeout 10s "${cmd[@]}"; then
+      status=0
+    else
+      status=$?
+    fi
+  else
+    if python3 - "$@" <<'PY'
+import subprocess, sys
+
+cmd = sys.argv[1:]
+try:
+    completed = subprocess.run(cmd, timeout=10)
+    sys.exit(completed.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+PY
+    then
+      status=0
+    else
+      status=$?
+    fi
+  fi
+  return "${status}"
+}
+
 for ((w = 1; w <= MAX_WORKERS; w++)); do
   for ((r = 1; r <= RUNS_PER_WORKER; r++)); do
     out_dir="${OUT_ROOT}/w${w}/run${r}"
     mkdir -p "${out_dir}"
     out_file="${out_dir}/profile.html"
     echo "Running scalene with ${w} worker(s), run ${r} -> ${out_file}"
-    python -m scalene --outfile "${out_file}" "${TARGET}" --workers "${w}" "${EXTRA_ARGS[@]}"
+    if run_with_timeout python -m scalene --outfile "${out_file}" "${TARGET}" --workers "${w}" "${EXTRA_ARGS[@]}"; then
+      continue
+    fi
+
+    exit_code=$?
+    if [[ ${exit_code} -eq 124 ]]; then
+      echo "Skipped w${w} run ${r}: exceeded 10 seconds, moving on."
+    else
+      echo "Skipped w${w} run ${r}: scalene failed with exit ${exit_code}, moving on."
+    fi
+    rm -f "${out_file}"
   done
 done
 
